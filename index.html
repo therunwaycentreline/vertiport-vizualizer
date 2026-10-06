@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vertiport & OLS 3D Visualizer | FAA EB 105A</title>
+  
+  <!-- MapLibre GL JS -->
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  
+  <!-- Three.js for 3D Geospatial Overlay -->
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eef8ff',
+              100: '#d8efff',
+              400: '#38bdf8',
+              500: '#0284c7',
+              600: '#0369a1',
+              800: '#075985',
+              900: '#0c4a6e',
+              950: '#082f49',
+            },
+            surface: {
+              approach: '#10b981',    /* Emerald Green */
+              departure: '#f59e0b',   /* Amber */
+              transitional: '#8b5cf6',/* Purple */
+              fato: '#eab308',        /* Yellow */
+              tlof: '#06b6d4',        /* Cyan */
+              safety: '#ef4444',      /* Red */
+              building: '#64748b'     /* Slate */
+            }
+          }
+        }
+      }
+    }
+  </script>
+  
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- Custom Styling -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans antialiased overflow-hidden select-none">
+
+  <!-- Fullscreen 3D Map Container -->
+  <div id="map" class="absolute inset-0 w-full h-full z-0"></div>
+
+  <!-- Top Navigation & Location Search Bar -->
+  <header class="absolute top-4 left-4 right-4 z-20 flex items-center justify-between pointer-events-none">
+    <!-- Brand / Title -->
+    <div class="pointer-events-auto flex items-center gap-3 bg-slate-900/85 backdrop-blur-md border border-slate-700/60 shadow-2xl rounded-2xl px-4 py-2.5">
+      <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-sky-600 to-cyan-400 flex items-center justify-center shadow-lg shadow-sky-500/20">
+        <i data-lucide="plane-takeoff" class="w-5 h-5 text-white"></i>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="text-sm font-bold tracking-wide text-white uppercase">Vertiport & OLS Visualizer</h1>
+          <span class="text-[10px] font-semibold bg-sky-500/20 text-sky-300 border border-sky-400/30 px-1.5 py-0.5 rounded-full">FAA EB 105A</span>
+        </div>
+        <p class="text-[11px] text-slate-400">3D Obstacle Limitation Surfaces & FATO Planner</p>
+      </div>
+    </div>
+
+    <!-- Geocoding Search & Quick Locators -->
+    <div class="pointer-events-auto flex items-center gap-2 max-w-lg w-full mx-4">
+      <div class="relative flex-1">
+        <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2"></i>
+        <input 
+          id="locationSearchInput" 
+          type="text" 
+          placeholder="Search location, airport, or address (e.g. Manhattan Heliport, SFO, London)..." 
+          class="w-full bg-slate-900/90 backdrop-blur-md border border-slate-700/70 focus:border-sky-500 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/40 shadow-xl transition-all"
+        />
+        <button id="clearSearchBtn" class="hidden absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">
+          <i data-lucide="x" class="w-3.5 h-3.5"></i>
+        </button>
+        <!-- Search Results Dropdown -->
+        <div id="searchResults" class="hidden absolute left-0 right-0 top-full mt-1.5 bg-slate-900/95 backdrop-blur-lg border border-slate-700/80 rounded-xl overflow-hidden shadow-2xl max-h-60 overflow-y-auto z-50"></div>
+      </div>
+    </div>
+
+    <!-- Top-Right Actions (Presets, Camera, Units, Info) -->
+    <div class="pointer-events-auto flex items-center gap-2 bg-slate-900/85 backdrop-blur-md border border-slate-700/60 shadow-2xl rounded-2xl p-1.5">
+      <!-- Unit Toggle (Metric / Imperial) -->
+      <button id="unitToggleBtn" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-slate-200 hover:bg-slate-800 transition-colors" title="Toggle Units (Metric / Imperial)">
+        <i data-lucide="scale" class="w-3.5 h-3.5 text-sky-400"></i>
+        <span id="unitLabel">Metric (m)</span>
+      </button>
+
+      <div class="w-px h-5 bg-slate-700/60"></div>
+
+      <!-- Basemap Style Selector -->
+      <div class="relative">
+        <button id="styleMenuBtn" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs text-slate-200 hover:bg-slate-800 transition-colors" title="Change Basemap Style">
+          <i data-lucide="layers" class="w-3.5 h-3.5 text-sky-400"></i>
+          <span id="activeStyleName">3D Dark</span>
+          <i data-lucide="chevron-down" class="w-3 h-3 text-slate-400"></i>
+        </button>
+        <div id="styleDropdown" class="hidden absolute right-0 top-full mt-1.5 w-36 bg-slate-900/95 backdrop-blur-md border border-slate-700 rounded-xl py-1 shadow-2xl z-50 text-xs">
+          <button data-style="dark" class="w-full text-left px-3 py-1.5 hover:bg-sky-600/20 text-slate-200 flex items-center justify-between font-medium">
+            3D Dark <i data-lucide="check" class="w-3 h-3 text-sky-400 style-check"></i>
+          </button>
+          <button data-style="satellite" class="w-full text-left px-3 py-1.5 hover:bg-sky-600/20 text-slate-200 flex items-center justify-between">
+            Satellite <i data-lucide="check" class="w-3 h-3 text-sky-400 style-check hidden"></i>
+          </button>
+          <button data-style="streets" class="w-full text-left px-3 py-1.5 hover:bg-sky-600/20 text-slate-200 flex items-center justify-between">
+            3D Light <i data-lucide="check" class="w-3 h-3 text-sky-400 style-check hidden"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="w-px h-5 bg-slate-700/60"></div>
+
+      <!-- Help / Guide Modal Toggle -->
+      <button id="openHelpBtn" class="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl transition-colors" title="About FAA EB 105A & Guide">
+        <i data-lucide="help-circle" class="w-4 h-4 text-slate-300"></i>
+      </button>
+
+      <!-- Export / Project Menu -->
+      <button id="openExportBtn" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white shadow-md transition-all" title="Save / Export Project">
+        <i data-lucide="download" class="w-3.5 h-3.5"></i>
+        <span>Export</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Left Sidebar Controls Drawer (Scrollable & Collapsible) -->
+  <aside id="controlsSidebar" class="absolute left-4 top-20 bottom-4 w-96 z-20 flex flex-col bg-slate-900/90 backdrop-blur-xl border border-slate-700/70 rounded-2xl shadow-2xl overflow-hidden transition-all duration-300">
+    <!-- Sidebar Header -->
+    <div class="px-4 py-3 border-b border-slate-700/60 flex items-center justify-between bg-slate-900/50">
+      <div class="flex items-center gap-2">
+        <i data-lucide="sliders" class="w-4 h-4 text-sky-400"></i>
+        <span class="text-xs font-bold uppercase tracking-wider text-slate-200">Vertiport Configuration</span>
+      </div>
+      <button id="resetDefaultsBtn" class="text-[11px] text-slate-400 hover:text-sky-400 flex items-center gap-1 transition-colors" title="Reset all parameters to default">
+        <i data-lucide="rotate-ccw" class="w-3 h-3"></i>
+        <span>Reset</span>
+      </button>
+    </div>
+
+    <!-- Scrollable Settings Container -->
+    <div class="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-5 text-xs">
+      
+      <!-- 1. Aircraft Preset Selection -->
+      <div class="space-y-2">
+        <label class="flex items-center justify-between text-slate-300 font-semibold">
+          <span class="flex items-center gap-1.5">
+            <i data-lucide="plane" class="w-3.5 h-3.5 text-sky-400"></i>
+            Aircraft Preset
+          </span>
+          <span id="aircraftDValBadge" class="text-[10px] font-mono bg-sky-950 text-sky-300 border border-sky-800/60 px-2 py-0.5 rounded-md">D = 15.2 m</span>
+        </label>
+        <select id="aircraftSelect" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none transition-all">
+          <option value="wisk-gen6" selected>✨ Wisk Gen 6 (Default, 4-Pax eVTOL — D: 15.24m / 50ft)</option>
+          <option value="joby-s4">Joby S4 (5-Seat eVTOL — D: 10.7m / 35ft)</option>
+          <option value="archer-midnight">Archer Midnight (4-Pax eVTOL — D: 14.3m / 47ft)</option>
+          <option value="beta-alia">Beta Technologies ALIA-250 (D: 15.2m / 50ft)</option>
+          <option value="lilium-jet">Lilium Jet (6-Pax eVTOL — D: 14.0m / 46ft)</option>
+          <option value="custom">⚙️ Custom Aircraft Parameters...</option>
+        </select>
+        
+        <!-- Custom D-Value Input (shown when Custom selected) -->
+        <div id="customDContainer" class="hidden pt-1.5 space-y-1.5 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800">
+          <div class="flex items-center justify-between text-slate-400">
+            <span>Controlling Dimension (D):</span>
+            <div class="flex items-center gap-1">
+              <input id="customDInput" type="number" step="0.1" min="3" max="50" value="15.24" class="w-20 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-right text-white font-mono text-xs focus:ring-1 focus:ring-sky-500">
+              <span class="unit-dist-label text-slate-400 text-[10px]">m</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Vertiport Placement & Elevated Structure -->
+      <div class="space-y-3 pt-2 border-t border-slate-800">
+        <div class="flex items-center justify-between">
+          <span class="font-semibold text-slate-300 flex items-center gap-1.5">
+            <i data-lucide="building-2" class="w-3.5 h-3.5 text-sky-400"></i>
+            Vertiport Elevation & Structure
+          </span>
+          <button id="clickToPlaceBtn" class="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-800 hover:bg-sky-600 text-sky-300 hover:text-white transition-all text-[11px] font-medium border border-slate-700">
+            <i data-lucide="map-pin" class="w-3 h-3"></i>
+            <span id="placeBtnText">Reposition</span>
+          </button>
+        </div>
+
+        <!-- Coordinates Display -->
+        <div class="grid grid-cols-2 gap-2 text-[11px] font-mono bg-slate-950/70 p-2 rounded-xl border border-slate-800">
+          <div><span class="text-slate-500">Lat:</span> <span id="latDisplay" class="text-slate-300">37.77492</span></div>
+          <div><span class="text-slate-500">Lon:</span> <span id="lonDisplay" class="text-slate-300">-122.41941</span></div>
+        </div>
+
+        <!-- Vertiport Elevation Slider (AGL Height) -->
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between text-slate-400">
+            <span>Deck Elevation (AGL):</span>
+            <div class="flex items-center gap-1 font-mono text-white">
+              <span id="vertiportElevationVal">0</span>
+              <span class="unit-dist-label text-slate-400 text-[10px]">m</span>
+            </div>
+          </div>
+          <input id="vertiportElevationSlider" type="range" min="0" max="150" step="1" value="0" class="w-full accent-sky-500 cursor-pointer">
+          <div class="flex justify-between text-[10px] text-slate-500">
+            <span>Ground (0)</span>
+            <span>Rooftop (30m)</span>
+            <span>Tower (150m)</span>
+          </div>
+        </div>
+
+        <!-- Greenfield Building Toggle (Under Elevated Vertiport) -->
+        <div class="bg-slate-950/70 p-3 rounded-xl border border-slate-800/80 space-y-2">
+          <div class="flex items-center justify-between">
+            <div class="space-y-0.5">
+              <div class="text-slate-200 font-medium flex items-center gap-1.5">
+                <span>Greenfield Building</span>
+                <span class="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1 py-0.2 rounded">3D</span>
+              </div>
+              <p class="text-[10px] text-slate-400">Render 3D structure under elevated deck</p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="renderBuildingToggle" class="sr-only peer">
+              <div class="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
+            </label>
+          </div>
+          <div id="buildingInfoNote" class="text-[10px] text-slate-500 italic">
+            When disabled, allows placing on existing 3D OSM buildings without duplicate geometry.
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. Orientation & Flight Corridors -->
+      <div class="space-y-3 pt-2 border-t border-slate-800">
+        <span class="font-semibold text-slate-300 flex items-center gap-1.5">
+          <i data-lucide="compass" class="w-3.5 h-3.5 text-sky-400"></i>
+          Flight Corridor Orientation
+        </span>
+
+        <!-- Primary Heading Slider -->
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between text-slate-400">
+            <span>Primary Approach Heading:</span>
+            <div class="flex items-center gap-1 font-mono text-sky-400 font-bold">
+              <span id="headingVal">045</span>°
+              <span id="headingCardinal" class="text-slate-400 text-[10px] font-normal">(NE)</span>
+            </div>
+          </div>
+          <input id="headingSlider" type="range" min="0" max="359" step="1" value="45" class="w-full accent-sky-500 cursor-pointer">
+          <div class="flex justify-between text-[10px] text-slate-500 font-mono">
+            <span>N (0°)</span>
+            <span>E (90°)</span>
+            <span>S (180°)</span>
+            <span>W (270°)</span>
+          </div>
+        </div>
+
+        <!-- Reciprocal Heading Info Badge -->
+        <div class="flex items-center justify-between bg-slate-950/70 p-2 rounded-xl border border-slate-800 text-[11px]">
+          <span class="text-slate-400">Reciprocal Corridor:</span>
+          <span id="reciprocalHeadingVal" class="font-mono text-amber-400 font-semibold">225° (SW)</span>
+        </div>
+      </div>
+
+      <!-- 4. Obstacle Limitation Surface Slopes & Geometry (EB 105A) -->
+      <div class="space-y-3 pt-2 border-t border-slate-800">
+        <div class="flex items-center justify-between">
+          <span class="font-semibold text-slate-300 flex items-center gap-1.5">
+            <i data-lucide="trending-up" class="w-3.5 h-3.5 text-sky-400"></i>
+            Approach / Departure Slope
+          </span>
+          <span id="slopeRatioBadge" class="text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800/60 px-1.5 py-0.5 rounded">8:1 (12.5%)</span>
+        </div>
+
+        <!-- Approach Slope Slider (Ratio / Angle) -->
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between text-slate-400">
+            <span>Slope Angle / Gradient:</span>
+            <div class="flex items-center gap-1 font-mono text-white">
+              <span id="slopeAngleDegVal">7.1</span>°
+              <span class="text-slate-500 text-[10px]">(<span id="slopePctVal">12.5</span>%)</span>
+            </div>
+          </div>
+          <!-- Slider mapped from 3:1 (18.4°) to 12:1 (4.76°) -->
+          <input id="slopeSlider" type="range" min="3" max="15" step="0.5" value="8" class="w-full accent-emerald-500 cursor-pointer">
+          <div class="flex justify-between text-[10px] text-slate-500 font-mono">
+            <span>Steep eVTOL (3:1)</span>
+            <span>Std EB105 (8:1)</span>
+            <span>Shallow (15:1)</span>
+          </div>
+        </div>
+
+        <!-- Flare / Divergence Rate (%) -->
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between text-slate-400">
+            <span>Lateral Flare Rate:</span>
+            <div class="flex items-center gap-1 font-mono text-white">
+              <span id="flareVal">15</span>%
+              <span class="text-slate-500 text-[10px]">(8.53°)</span>
+            </div>
+          </div>
+          <input id="flareSlider" type="range" min="5" max="30" step="1" value="15" class="w-full accent-sky-500 cursor-pointer">
+          <div class="flex justify-between text-[10px] text-slate-500">
+            <span>5%</span>
+            <span>15% (Std)</span>
+            <span>30%</span>
+          </div>
+        </div>
+
+        <!-- Corridor Length -->
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between text-slate-400">
+            <span>Corridor Extent / Length:</span>
+            <div class="flex items-center gap-1 font-mono text-white">
+              <span id="corridorLengthVal">3000</span>
+              <span class="unit-dist-label text-slate-400 text-[10px]">m</span>
+            </div>
+          </div>
+          <input id="corridorLengthSlider" type="range" min="500" max="5000" step="100" value="3000" class="w-full accent-sky-500 cursor-pointer">
+          <div class="flex justify-between text-[10px] text-slate-500">
+            <span>500m</span>
+            <span>3,000m (EB 105A)</span>
+            <span>5,000m</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. Pad Multipliers & Geometric Proportions -->
+      <div class="space-y-3 pt-2 border-t border-slate-800">
+        <span class="font-semibold text-slate-300 flex items-center gap-1.5">
+          <i data-lucide="box" class="w-3.5 h-3.5 text-sky-400"></i>
+          Pad Dimensions & Ratios
+        </span>
+
+        <div class="grid grid-cols-3 gap-2 text-center">
+          <div class="bg-slate-950/80 p-2 rounded-xl border border-slate-800">
+            <div class="text-[10px] text-cyan-400 font-semibold uppercase">TLOF</div>
+            <div class="text-xs font-mono font-bold text-white mt-0.5"><span id="tlofDimDisplay">15.2</span><span class="unit-dist-label text-[9px] text-slate-400 ml-0.5">m</span></div>
+            <div class="text-[9px] text-slate-500">1.0 × D</div>
+          </div>
+          <div class="bg-slate-950/80 p-2 rounded-xl border border-slate-800">
+            <div class="text-[10px] text-yellow-400 font-semibold uppercase">FATO</div>
+            <div class="text-xs font-mono font-bold text-white mt-0.5"><span id="fatoDimDisplay">22.9</span><span class="unit-dist-label text-[9px] text-slate-400 ml-0.5">m</span></div>
+            <div class="text-[9px] text-slate-500">1.5 × D</div>
+          </div>
+          <div class="bg-slate-950/80 p-2 rounded-xl border border-slate-800">
+            <div class="text-[10px] text-rose-400 font-semibold uppercase">Safety Area</div>
+            <div class="text-xs font-mono font-bold text-white mt-0.5"><span id="saDimDisplay">30.5</span><span class="unit-dist-label text-[9px] text-slate-400 ml-0.5">m</span></div>
+            <div class="text-[9px] text-slate-500">2.0 × D</div>
+          </div>
+        </div>
+
+        <!-- FATO Shape Selector -->
+        <div class="flex items-center justify-between pt-1">
+          <span class="text-slate-400">FATO Geometry Shape:</span>
+          <div class="flex items-center gap-1 bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-[11px]">
+            <button id="shapeSquareBtn" class="px-2.5 py-1 rounded-md bg-sky-600 text-white font-medium transition-all">Square</button>
+            <button id="shapeCircleBtn" class="px-2.5 py-1 rounded-md text-slate-400 hover:text-white transition-all">Circular</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 6. 3D Surface Visibility & Opacity -->
+      <div class="space-y-3 pt-2 border-t border-slate-800">
+        <span class="font-semibold text-slate-300 flex items-center gap-1.5">
+          <i data-lucide="eye" class="w-3.5 h-3.5 text-sky-400"></i>
+          3D Surface Layers & Transparency
+        </span>
+
+        <!-- Surface Layer Toggles -->
+        <div class="space-y-2 bg-slate-950/60 p-3 rounded-xl border border-slate-800 text-[11px]">
+          <label class="flex items-center justify-between cursor-pointer">
+            <span class="flex items-center gap-2">
+              <span class="w-3 h-3 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/50"></span>
+              <span class="text-slate-200">Primary Approach/Departure</span>
+            </span>
+            <input type="checkbox" id="showPrimaryToggle" checked class="accent-emerald-500 w-4 h-4 rounded">
+          </label>
+          <label class="flex items-center justify-between cursor-pointer">
+            <span class="flex items-center gap-2">
+              <span class="w-3 h-3 rounded-full bg-amber-500 shadow-sm shadow-amber-500/50"></span>
+              <span class="text-slate-200">Reciprocal Corridor</span>
+            </span>
+            <input type="checkbox" id="showReciprocalToggle" checked class="accent-amber-500 w-4 h-4 rounded">
+          </label>
+          <label class="flex items-center justify-between cursor-pointer">
+            <span class="flex items-center gap-2">
+              <span class="w-3 h-3 rounded-full bg-purple-500 shadow-sm shadow-purple-500/50"></span>
+              <span class="text-slate-200">Transitional Side Surfaces (2:1)</span>
+            </span>
+            <input type="checkbox" id="showTransitionalToggle" checked class="accent-purple-500 w-4 h-4 rounded">
+          </label>
+          <label class="flex items-center justify-between cursor-pointer">
+            <span class="flex items-center gap-2">
+              <span class="w-3 h-3 rounded-full bg-cyan-400 shadow-sm shadow-cyan-400/50"></span>
+              <span class="text-slate-200">TLOF / FATO / Safety Area</span>
+            </span>
+            <input type="checkbox" id="showPadsToggle" checked class="accent-cyan-500 w-4 h-4 rounded">
+          </label>
+          <label class="flex items-center justify-between cursor-pointer">
+            <span class="flex items-center gap-2">
+              <span class="w-3 h-3 rounded-full bg-slate-400 shadow-sm shadow-slate-400/50"></span>
+              <span class="text-slate-200">3D Extruded Buildings</span>
+            </span>
+            <input type="checkbox" id="showBuildingsToggle" checked class="accent-slate-400 w-4 h-4 rounded">
+          </label>
+        </div>
+
+        <!-- Master Opacity Slider -->
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between text-slate-400">
+            <span>Surface Opacity:</span>
+            <span id="opacityVal" class="font-mono text-white">45%</span>
+          </div>
+          <input id="opacitySlider" type="range" min="10" max="90" step="5" value="45" class="w-full accent-sky-500 cursor-pointer">
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Sidebar Footer Quick Stats -->
+    <div class="p-3 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between text-[11px] text-slate-400">
+      <div class="flex items-center gap-1.5">
+        <i data-lucide="shield-check" class="w-4 h-4 text-emerald-400"></i>
+        <span>EB 105A Compliant</span>
+      </div>
+      <div class="font-mono text-slate-300">
+        <span id="corridorWidthMax">Max W: 1,020m</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Right Side Quick Camera Controls & Info HUD -->
+  <div class="absolute right-4 top-20 z-20 flex flex-col items-end gap-3 pointer-events-none">
+    
+    <!-- Camera Preset Floating Toolbar -->
+    <div class="pointer-events-auto bg-slate-900/90 backdrop-blur-md border border-slate-700/70 p-1.5 rounded-2xl shadow-2xl flex flex-col gap-1">
+      <button id="camTopDownBtn" class="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl transition-all" title="Top-Down 2D Plan View">
+        <i data-lucide="compass" class="w-4 h-4"></i>
+      </button>
+      <button id="camIsometricBtn" class="p-2 text-sky-400 hover:text-white bg-sky-600/20 hover:bg-sky-600 rounded-xl transition-all" title="3D Isometric Orbit View">
+        <i data-lucide="box" class="w-4 h-4"></i>
+      </button>
+      <button id="camGlidepathBtn" class="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl transition-all" title="Pilot Glidepath Approach View">
+        <i data-lucide="navigation" class="w-4 h-4"></i>
+      </button>
+      <div class="w-full h-px bg-slate-700/50 my-0.5"></div>
+      <button id="camCenterVertiportBtn" class="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl transition-all" title="Center on Vertiport">
+        <i data-lucide="crosshair" class="w-4 h-4"></i>
+      </button>
+    </div>
+
+    <!-- Live Telemetry / Geometry HUD -->
+    <div id="telemetryHud" class="pointer-events-auto bg-slate-900/90 backdrop-blur-md border border-slate-700/70 p-3.5 rounded-2xl shadow-2xl w-64 space-y-2 text-xs">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+        <span class="font-bold text-slate-200 flex items-center gap-1.5">
+          <i data-lucide="activity" class="w-3.5 h-3.5 text-emerald-400"></i>
+          Geometry HUD
+        </span>
+        <span class="text-[10px] text-slate-400 font-mono">LIVE</span>
+      </div>
+
+      <div class="space-y-1.5 text-[11px]">
+        <div class="flex justify-between">
+          <span class="text-slate-400">Aircraft:</span>
+          <span id="hudAircraftName" class="font-semibold text-white">Wisk Gen 6</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-slate-400">Controlling D:</span>
+          <span id="hudDVal" class="font-mono text-sky-400">15.24 m (50 ft)</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-slate-400">Pad Base AGL:</span>
+          <span id="hudElevation" class="font-mono text-white">0 m (Ground)</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-slate-400">Approach Corridor:</span>
+          <span id="hudHeading" class="font-mono text-emerald-400">045° / 225°</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-slate-400">Approach Slope:</span>
+          <span id="hudSlope" class="font-mono text-white">8:1 (7.125°)</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-slate-400">Inner SA Width:</span>
+          <span id="hudInnerWidth" class="font-mono text-white">30.48 m</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-slate-400">Corridor Height @ End:</span>
+          <span id="hudMaxHeight" class="font-mono text-white">375.0 m</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Notification Banner / Click Mode Indicator -->
+  <div id="placementBanner" class="hidden absolute bottom-6 left-1/2 -translate-x-1/2 z-30 bg-sky-600/95 backdrop-blur-md border border-sky-400/40 text-white px-5 py-2.5 rounded-full shadow-2xl flex items-center gap-3 text-xs animate-bounce">
+    <i data-lucide="mouse-pointer-click" class="w-4 h-4"></i>
+    <span class="font-medium">Click anywhere on the 3D map to place the vertiport</span>
+    <button id="cancelPlacementBtn" class="bg-black/30 hover:bg-black/50 text-white text-[11px] px-2.5 py-1 rounded-full font-bold ml-2">Done</button>
+  </div>
+
+  <!-- Help & Standards Modal -->
+  <div id="helpModal" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 max-h-[85vh] overflow-y-auto custom-scrollbar">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center gap-2">
+          <i data-lucide="book-open" class="w-5 h-5 text-sky-400"></i>
+          <h2 class="text-base font-bold text-white">FAA EB 105A Vertiport Design Standards</h2>
+        </div>
+        <button id="closeHelpModalBtn" class="text-slate-400 hover:text-white p-1 rounded-lg">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="space-y-4 text-xs text-slate-300 leading-relaxed">
+        <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+          <h3 class="font-bold text-sky-400 text-sm">Key Surfaces & Geometric Definitions</h3>
+          <ul class="list-disc list-inside space-y-1.5 text-slate-300">
+            <li><strong class="text-cyan-400">TLOF (Touchdown and Lift-Off Area):</strong> A load-bearing area centered within the FATO, typically sized to $1.0\,D$ where $D$ is the controlling aircraft dimension.</li>
+            <li><strong class="text-yellow-400">FATO (Final Approach and Take-Off Area):</strong> An obstacle-free area sized to at least $1.5\,D$ (or $2.0\,D$) over which the final phase of approach or start of takeoff maneuver is completed.</li>
+            <li><strong class="text-rose-400">Safety Area (SA):</strong> Extends around the FATO out to $2.0\,D$ to protect aircraft during operational excursions.</li>
+            <li><strong class="text-emerald-400">Takeoff Climb & Approach Surface (OLS):</strong> An inclined volumetric plane beginning at the edge of the Safety Area, sloping upwards at a customizable ratio (default 8:1 = 12.5% or steeper for eVTOLs) with a 15% lateral flare divergence.</li>
+            <li><strong class="text-purple-400">Transitional Surfaces:</strong> Lateral side surfaces extending outwards and upwards at a 2:1 slope from the Safety Area perimeter to the edge of the approach surfaces.</li>
+          </ul>
+        </div>
+
+        <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+          <h3 class="font-bold text-amber-400 text-sm">Elevated Vertiports & Greenfield Toggle</h3>
+          <p>
+            When a vertiport is elevated (above 0m AGL), enabling the <strong>Greenfield Building</strong> toggle generates a 3D structural building directly underneath the pad from the terrain. If placing on top of an existing rooftop, disable the toggle to view the elevated envelope without obstructing the OpenStreetMap 3D building.
+          </p>
+        </div>
+
+        <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+          <h3 class="font-bold text-emerald-400 text-sm">Default Aircraft: Wisk Gen 6</h3>
+          <p>
+            The Wisk Gen 6 is the world's leading autonomous 4-passenger eVTOL with a 50-foot (15.24 m) controlling dimension ($D$), featuring 12 proprietary lift/thrust rotors.
+          </p>
+        </div>
+      </div>
+
+      <div class="flex justify-end pt-2">
+        <button id="closeHelpModalBtn2" class="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-medium text-xs transition-colors">
+          Got it
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export / Share Project Modal -->
+  <div id="exportModal" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center gap-2">
+          <i data-lucide="download" class="w-5 h-5 text-sky-400"></i>
+          <h2 class="text-base font-bold text-white">Export & Save Configuration</h2>
+        </div>
+        <button id="closeExportModalBtn" class="text-slate-400 hover:text-white p-1 rounded-lg">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="space-y-3 text-xs text-slate-300">
+        <p>Save your vertiport layout and obstacle limitation surfaces to a JSON project file, or load a previously saved session.</p>
+
+        <div class="grid grid-cols-2 gap-3 pt-2">
+          <button id="downloadJsonBtn" class="flex flex-col items-center justify-center gap-2 p-4 bg-slate-950 hover:bg-sky-950/60 border border-slate-800 hover:border-sky-500/50 rounded-xl transition-all">
+            <i data-lucide="file-json" class="w-6 h-6 text-sky-400"></i>
+            <span class="font-bold text-white">Download JSON</span>
+            <span class="text-[10px] text-slate-400 text-center">Save vertiport project specs</span>
+          </button>
+          
+          <label class="flex flex-col items-center justify-center gap-2 p-4 bg-slate-950 hover:bg-sky-950/60 border border-slate-800 hover:border-sky-500/50 rounded-xl transition-all cursor-pointer">
+            <i data-lucide="upload" class="w-6 h-6 text-emerald-400"></i>
+            <span class="font-bold text-white">Load JSON</span>
+            <span class="text-[10px] text-slate-400 text-center">Import saved vertiport file</span>
+            <input type="file" id="importJsonInput" accept=".json" class="hidden">
+          </label>
+        </div>
+
+        <div class="pt-2">
+          <button id="exportGeoJsonBtn" class="w-full flex items-center justify-center gap-2 p-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-white font-medium transition-colors">
+            <i data-lucide="map" class="w-4 h-4 text-sky-400"></i>
+            <span>Export 2D Surface Footprints as GeoJSON</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Application Logic Scripts -->
+  <script src="ols-engine.js"></script>
+  <script src="three-maplibre-layer.js"></script>
+  <script src="app.js"></script>
+
+  <script>
+    // Initialize Lucide icons
+    lucide.createIcons();
+  </script>
+</body>
+</html>
