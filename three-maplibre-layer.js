@@ -50,6 +50,8 @@ class ThreeMapLibreLayer {
         antialias: true
       });
       this.renderer.autoClear = false;
+    } else {
+      this.renderer.resetState();
     }
 
     // Force full geometry rebuild and matrix sync
@@ -57,7 +59,6 @@ class ThreeMapLibreLayer {
   }
 
   onRemove() {
-    // Preserve renderer instance to avoid WebGL context loss on style switches
     if (this.map) {
       this.map.triggerRepaint();
     }

@@ -111,12 +111,15 @@ class VertiportApp {
       this.repositionVertiport(lngLat.lat, lngLat.lng);
     });
 
+    // Map Event Listeners for Style & Layer Lifecycle
     this.map.on('load', () => {
       this.setupMapLayers();
     });
 
-    this.map.on('style.load', () => {
-      this.setupMapLayers();
+    this.map.on('styledata', () => {
+      if (this.map.isStyleLoaded()) {
+        this.setupMapLayers();
+      }
     });
 
     // Map Click Handler for Vertiport Placement
@@ -129,9 +132,11 @@ class VertiportApp {
   }
 
   setupMapLayers() {
-    // Add 3D Extruded Buildings Layer (if vector style supports it)
-    if (!this.map.getLayer('3d-buildings') && this.map.getSource('openmaptiles')) {
-      const layers = this.map.getStyle().layers;
+    if (!this.map || !this.map.isStyleLoaded()) return;
+
+    // 1. Add 3D Extruded Buildings Layer (if vector style supports it)
+    if (this.engine.showBuildings && !this.map.getLayer('3d-buildings') && this.map.getSource('openmaptiles')) {
+      const layers = this.map.getStyle().layers || [];
       let labelLayerId;
       for (let i = 0; i < layers.length; i++) {
         if (layers[i].type === 'symbol' && layers[i].layout && layers[i].layout['text-field']) {
@@ -178,11 +183,11 @@ class VertiportApp {
           labelLayerId
         );
       } catch (err) {
-        console.warn('Could not add 3D buildings layer:', err);
+        // Ignored if layer exists
       }
     }
 
-    // Add / Re-add Custom Three.js 3D Layer
+    // 2. Add / Re-add Custom Three.js 3D Layer
     if (!this.map.getLayer(this.threeLayer.id)) {
       try {
         this.map.addLayer(this.threeLayer);
@@ -193,11 +198,13 @@ class VertiportApp {
       this.threeLayer.updateGeometry();
     }
 
-    // Ensure marker is attached
+    // 3. Ensure Vertiport Center Marker is attached and positioned
     if (this.marker) {
       this.marker.setLngLat([this.engine.lng, this.engine.lat]);
       this.marker.addTo(this.map);
     }
+
+    this.map.triggerRepaint();
   }
 
   // --- UI Event Binding ---
@@ -316,6 +323,8 @@ class VertiportApp {
       this.engine.showBuildings = e.target.checked;
       if (this.map.getLayer('3d-buildings')) {
         this.map.setLayoutProperty('3d-buildings', 'visibility', e.target.checked ? 'visible' : 'none');
+      } else if (e.target.checked) {
+        this.setupMapLayers();
       }
     });
 
