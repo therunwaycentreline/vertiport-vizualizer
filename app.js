@@ -36,6 +36,7 @@ class VertiportApp {
     this.currentUnit = 'metric'; // 'metric' or 'imperial'
     this.isPlacingMode = false;
     this.activeStyle = 'dark';
+    this.marker = null;
 
     // Initialize OLS Engine with default Wisk Gen 6
     this.engine = new OLSEngine({
@@ -77,6 +78,39 @@ class VertiportApp {
     this.map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
     this.map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
 
+    // Create Vertiport Center Map Marker
+    const markerEl = document.createElement('div');
+    markerEl.className = 'vertiport-center-pin';
+    markerEl.innerHTML = `
+      <div class="relative flex items-center justify-center cursor-pointer group">
+        <div class="absolute -inset-2 bg-sky-500 rounded-full opacity-30 animate-ping"></div>
+        <div class="w-7 h-7 bg-sky-500 border-2 border-white rounded-full flex items-center justify-center shadow-lg shadow-sky-500/50 text-white font-bold text-xs group-hover:scale-110 transition-transform">
+          H
+        </div>
+      </div>
+    `;
+
+    this.marker = new maplibregl.Marker({
+      element: markerEl,
+      draggable: true,
+      anchor: 'center'
+    })
+      .setLngLat([this.engine.lng, this.engine.lat])
+      .addTo(this.map);
+
+    this.marker.on('drag', () => {
+      const lngLat = this.marker.getLngLat();
+      this.engine.lat = lngLat.lat;
+      this.engine.lng = lngLat.lng;
+      this.threeLayer.updateGeometry();
+      this.updateUI();
+    });
+
+    this.marker.on('dragend', () => {
+      const lngLat = this.marker.getLngLat();
+      this.repositionVertiport(lngLat.lat, lngLat.lng);
+    });
+
     this.map.on('load', () => {
       this.setupMapLayers();
     });
@@ -106,49 +140,63 @@ class VertiportApp {
         }
       }
 
-      this.map.addLayer(
-        {
-          id: '3d-buildings',
-          source: 'openmaptiles',
-          'source-layer': 'building',
-          type: 'fill-extrusion',
-          minzoom: 13,
-          paint: {
-            'fill-extrusion-color': [
-              'interpolate',
-              ['linear'],
-              ['get', 'render_height'],
-              0, '#1e293b',
-              50, '#334155',
-              150, '#475569',
-              300, '#64748b'
-            ],
-            'fill-extrusion-height': [
-              'interpolate',
-              ['linear'],
-              ['zoom'],
-              13, 0,
-              14.05, ['get', 'render_height']
-            ],
-            'fill-extrusion-base': [
-              'interpolate',
-              ['linear'],
-              ['zoom'],
-              13, 0,
-              14.05, ['get', 'render_min_height']
-            ],
-            'fill-extrusion-opacity': 0.8
-          }
-        },
-        labelLayerId
-      );
+      try {
+        this.map.addLayer(
+          {
+            id: '3d-buildings',
+            source: 'openmaptiles',
+            'source-layer': 'building',
+            type: 'fill-extrusion',
+            minzoom: 13,
+            paint: {
+              'fill-extrusion-color': [
+                'interpolate',
+                ['linear'],
+                ['get', 'render_height'],
+                0, '#1e293b',
+                50, '#334155',
+                150, '#475569',
+                300, '#64748b'
+              ],
+              'fill-extrusion-height': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                13, 0,
+                14.05, ['get', 'render_height']
+              ],
+              'fill-extrusion-base': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                13, 0,
+                14.05, ['get', 'render_min_height']
+              ],
+              'fill-extrusion-opacity': 0.8
+            }
+          },
+          labelLayerId
+        );
+      } catch (err) {
+        console.warn('Could not add 3D buildings layer:', err);
+      }
     }
 
-    // Add Custom Three.js 3D Layer
+    // Add / Re-add Custom Three.js 3D Layer
     if (!this.map.getLayer(this.threeLayer.id)) {
-      this.map.addLayer(this.threeLayer);
+      try {
+        this.map.addLayer(this.threeLayer);
+      } catch (err) {
+        console.warn('Could not add Three.js layer:', err);
+      }
     } else {
       this.threeLayer.updateGeometry();
+    }
+
+    // Ensure marker is attached
+    if (this.marker) {
+      this.marker.setLngLat([this.engine.lng, this.engine.lat]);
+      this.marker.addTo(this.map);
     }
   }
 
@@ -345,17 +393,6 @@ class VertiportApp {
 
   // --- Fly To Pilot Glidepath Approach View ---
   flyToGlidepathView() {
-    // Position camera along the approach path looking down towards the vertiport
-    const radHeading = (this.engine.heading * Math.PI) / 180.0;
-    const viewDist = 1200; // meters out
-    const viewAlt = this.engine.elevationMeters + (viewDist / this.engine.slopeRatio);
-
-    // Camera offset in meters
-    const offsetX = Math.sin(radHeading) * viewDist;
-    const offsetY = Math.cos(radHeading) * viewDist;
-
-    const camPos = this.engine.enuToLngLat(offsetX, offsetY, viewAlt);
-
     this.map.flyTo({
       center: [this.engine.lng, this.engine.lat],
       pitch: 75,
@@ -500,7 +537,7 @@ class VertiportApp {
             this.engine.opacity = c.opacity ?? 0.45;
 
             this.map.flyTo({ center: [this.engine.lng, this.engine.lat], zoom: 16 });
-            this.onParameterChanged();
+            this.repositionVertiport(this.engine.lat, this.engine.lng);
             exportModal.classList.add('hidden');
           }
         } catch (err) {
@@ -541,6 +578,9 @@ class VertiportApp {
   repositionVertiport(lat, lng) {
     this.engine.lat = lat;
     this.engine.lng = lng;
+    if (this.marker) {
+      this.marker.setLngLat([lng, lat]);
+    }
     this.onParameterChanged();
   }
 

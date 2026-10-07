@@ -16,21 +16,23 @@ class ThreeMapLibreLayer {
     this.scene = new THREE.Scene();
     this.renderer = null;
     this.map = null;
+    this.gl = null;
 
     // Lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
     this.scene.add(ambientLight);
 
-    const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.9);
+    const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.95);
     dirLight1.position.set(200, 300, 500);
     this.scene.add(dirLight1);
 
-    const dirLight2 = new THREE.DirectionalLight(0x90b0e0, 0.5);
+    const dirLight2 = new THREE.DirectionalLight(0x90b0e0, 0.55);
     dirLight2.position.set(-200, -300, 200);
     this.scene.add(dirLight2);
 
     // Root Group for all Vertiport Meshes
     this.rootGroup = new THREE.Group();
+    this.rootGroup.matrixAutoUpdate = false;
     this.scene.add(this.rootGroup);
 
     // Track active meshes
@@ -39,15 +41,37 @@ class ThreeMapLibreLayer {
 
   onAdd(map, gl) {
     this.map = map;
-    this.renderer = new THREE.WebGLRenderer({
-      canvas: map.getCanvas(),
-      context: gl,
-      antialias: true
-    });
-    this.renderer.autoClear = false;
+    this.gl = gl;
 
-    // Initial build of geometry
+    if (!this.renderer) {
+      this.renderer = new THREE.WebGLRenderer({
+        canvas: map.getCanvas(),
+        context: gl,
+        antialias: true
+      });
+      this.renderer.autoClear = false;
+    }
+
+    // Force full geometry rebuild and matrix sync
     this.updateGeometry();
+  }
+
+  onRemove() {
+    // Preserve renderer instance to avoid WebGL context loss on style switches
+    if (this.map) {
+      this.map.triggerRepaint();
+    }
+  }
+
+  /**
+   * Recursively disables frustum culling on all child meshes/lines
+   * so Three.js doesn't mistakenly cull them in MapLibre Mercator space
+   */
+  _disableFrustumCulling(obj) {
+    obj.frustumCulled = false;
+    if (obj.children && obj.children.length > 0) {
+      obj.children.forEach(child => this._disableFrustumCulling(child));
+    }
   }
 
   /**
@@ -74,30 +98,35 @@ class ThreeMapLibreLayer {
     // 1. TLOF Pad
     if (this.engine.showPads && geomData.tlof) {
       const tlofMesh = this._createPadMesh(geomData.tlof, 0x06b6d4, 0xffffff, 'TLOF', 0.9);
+      this._disableFrustumCulling(tlofMesh);
       this.rootGroup.add(tlofMesh);
     }
 
     // 2. FATO Pad
     if (this.engine.showPads && geomData.fato) {
       const fatoMesh = this._createPadMesh(geomData.fato, 0xeab308, 0xfacc15, 'FATO', 0.6);
+      this._disableFrustumCulling(fatoMesh);
       this.rootGroup.add(fatoMesh);
     }
 
     // 3. Safety Area
     if (this.engine.showPads && geomData.safetyArea) {
       const saMesh = this._createPadMesh(geomData.safetyArea, 0xef4444, 0xf87171, 'SA', 0.35);
+      this._disableFrustumCulling(saMesh);
       this.rootGroup.add(saMesh);
     }
 
     // 4. Primary Takeoff Climb & Approach Surface (OLS)
     if (this.engine.showPrimary && geomData.primaryCorridor) {
       const primaryMesh = this._createCorridorMesh(geomData.primaryCorridor, 0x10b981, 0x34d399, opacity);
+      this._disableFrustumCulling(primaryMesh);
       this.rootGroup.add(primaryMesh);
     }
 
     // 5. Reciprocal Takeoff Climb & Approach Surface (OLS)
     if (this.engine.showReciprocal && geomData.reciprocalCorridor) {
       const recipMesh = this._createCorridorMesh(geomData.reciprocalCorridor, 0xf59e0b, 0xfbbf24, opacity);
+      this._disableFrustumCulling(recipMesh);
       this.rootGroup.add(recipMesh);
     }
 
@@ -105,6 +134,7 @@ class ThreeMapLibreLayer {
     if (this.engine.showTransitional && geomData.transitionalSurfaces) {
       geomData.transitionalSurfaces.forEach(trans => {
         const transMesh = this._createTransitionalMesh(trans, 0x8b5cf6, 0xa78bfa, opacity * 0.85);
+        this._disableFrustumCulling(transMesh);
         this.rootGroup.add(transMesh);
       });
     }
@@ -112,8 +142,13 @@ class ThreeMapLibreLayer {
     // 7. Greenfield 3D Supporting Building Structure
     if (geomData.buildingStructure) {
       const bldgMesh = this._createBuildingMesh(geomData.buildingStructure);
+      this._disableFrustumCulling(bldgMesh);
       this.rootGroup.add(bldgMesh);
     }
+
+    // Force matrix world update
+    this.rootGroup.matrixWorldNeedsUpdate = true;
+    this.rootGroup.updateMatrixWorld(true);
 
     // Request repaint on map
     if (this.map) {
@@ -136,7 +171,6 @@ class ThreeMapLibreLayer {
       for (let i = 0; i < segs; i++) {
         const v1 = padData.vertices[i];
         const v2 = padData.vertices[i + 1];
-        // Triangle: center, v1, v2
         pos.push(center.x, center.y, center.z);
         pos.push(v1.x, v1.y, v1.z + 0.1);
         pos.push(v2.x, v2.y, v2.z + 0.1);
@@ -166,7 +200,6 @@ class ThreeMapLibreLayer {
       // Polygon / Square pad
       const v = padData.vertices;
       const geom = new THREE.BufferGeometry();
-      // 2 Triangles for square: (0, 1, 2) and (0, 2, 3)
       const pos = [
         v[0].x, v[0].y, v[0].z + 0.1,
         v[1].x, v[1].y, v[1].z + 0.1,
@@ -205,7 +238,6 @@ class ThreeMapLibreLayer {
       // If TLOF, add a touchdown 'H' symbol
       if (label === 'TLOF') {
         const hSize = padData.dimension * 0.45;
-        const hBar = hSize * 0.18;
         const radH = (this.engine.heading * Math.PI) / 180.0;
         const cosH = Math.cos(radH);
         const sinH = Math.sin(radH);
@@ -436,7 +468,7 @@ class ThreeMapLibreLayer {
    * MapLibre Render Callback: syncs Three.js projection matrix with MapLibre camera matrix
    */
   render(gl, matrix) {
-    if (!this.engine || !this.map) return;
+    if (!this.engine || !this.map || !this.renderer) return;
 
     // Convert Vertiport Lat/Lng into MapLibre Mercator Coordinates
     const centerMercator = maplibregl.MercatorCoordinate.fromLngLat(
@@ -454,16 +486,19 @@ class ThreeMapLibreLayer {
     // Scale from ENU meters to Mercator units (note: Y in WebGL is +Z in ENU or flipped Mercator)
     const scale = new THREE.Matrix4();
     scale.makeScale(meterScale, -meterScale, meterScale); // flip Y because Mercator Y goes downwards
-
     transform.multiply(scale);
 
-    // Apply transformation to root group
-    this.rootGroup.matrixAutoUpdate = false;
-    this.rootGroup.matrix = transform;
+    // Explicitly update and apply matrix and matrixWorld to root group
+    this.rootGroup.matrix.copy(transform);
+    this.rootGroup.matrixWorld.copy(transform);
+    this.rootGroup.matrixWorldNeedsUpdate = true;
+    this.rootGroup.updateMatrixWorld(true);
 
     // Update Three.js camera from MapLibre camera matrix
-    const m = new THREE.Matrix4().fromArray(matrix);
-    this.camera.projectionMatrix = m;
+    this.camera.projectionMatrix.fromArray(matrix);
+    if (this.camera.projectionMatrixInverse) {
+      this.camera.projectionMatrixInverse.copy(this.camera.projectionMatrix).invert();
+    }
 
     this.renderer.resetState();
     this.renderer.render(this.scene, this.camera);
